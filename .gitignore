@@ -1,0 +1,23 @@
+# Dependencies and build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Local configuration and runtime output
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# Reproducible databases, indexes, backups, and local model weights
+data/
+models/
+*.gguf
+*.safetensors
+*.sqlite3
+*.sqlite3-*

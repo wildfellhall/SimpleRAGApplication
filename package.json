@@ -1,0 +1,14 @@
+{
+  "name": "forma",
+  "private": true,
+  "scripts": {
+    "setup": "python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt && npm --prefix frontend install && .venv/bin/python -m backend.db && ollama pull all-minilm:22m && .venv/bin/python -m backend.vectors",
+    "dev": "node scripts/dev.mjs",
+    "model": "python3 scripts/start_model.py",
+    "api": ".venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8008",
+    "web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "test": ".venv/bin/python -m pytest backend/tests -q",
+    "vectors": ".venv/bin/python -m backend.vectors"
+  }
+}
