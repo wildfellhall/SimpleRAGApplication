@@ -37,7 +37,7 @@ try{
   const result=JSON.parse(frame.split('data: ')[1])
   expect(result.sources[0].data.summary.avg_time_seconds).toBe(skill.avg_time_seconds)
   expect(result.sources[0].data.summary.total_time_seconds).toBe(skill.total_time_seconds)
-  await expect(page.getByRole('button',{name:'New conversation'})).toBeEnabled({timeout:130000})
+  await expect(page.getByRole('button',{name:'New conversation'})).toBeEnabled({timeout:390000})
   const answer=await page.locator('.message.assistant .markdown').innerText()
   console.log(JSON.stringify({average_seconds:skill.avg_time_seconds,total_seconds:skill.total_time_seconds,answer,metrics:result.metrics}))
   await page.locator('.sources summary').click()

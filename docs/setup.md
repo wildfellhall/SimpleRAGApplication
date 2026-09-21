@@ -25,7 +25,7 @@ The default model path is `~/UltimateDocumentEditor/Qwen3.8-27B-UD-IQ1_S.gguf`. 
 
 The inspected GGUF reports `qwen35` architecture, approximately 26.90 billion parameters, and IQ1_S quantization. Its 5.77 GiB weights were tested on a 16 GiB Apple M5. The filename and metadata are reported as found, rather than an independent certification of model lineage or a claim of benchmark superiority. Quantization and hardware affect response quality and latency.
 
-The launcher uses an 8,192-token context, one inference slot, Metal/GPU offload where supported, and 512/256 logical/physical batch sizes. The backend disables thinking for each request. A different model/runtime may need compatible launcher flags or a different chat-template setting.
+The launcher uses an 8,192-token context, one inference slot, Metal/GPU offload where supported, and 512/256 logical/physical batch sizes. The launcher and backend disable thinking; requests also disable preservation of previous reasoning and request separate reasoning fields. The backend checks the actual token budget and validates responses before display. A different model/runtime may need compatible launcher flags or a different chat-template setting.
 
 | Variable | Default / purpose |
 | --- | --- |
@@ -40,7 +40,7 @@ The launcher uses an 8,192-token context, one inference slot, Metal/GPU offload 
 | `DATABASE_PATH` | `data/students.sqlite3` |
 | `CHROMA_PATH` | `data/chroma`; takes precedence over legacy `VECTOR_PATH` |
 
-Export variables in the shell; environment files are not loaded automatically. `MODEL_PORT` changes the model launcher's port, but the combined development launcher checks port 8091. For a non-default model port, run services separately and set `MODEL_URL` to match. The inference server must implement `/health` and `/v1/chat/completions`.
+Export variables in the shell; environment files are not loaded automatically. `MODEL_PORT` changes the model launcher's port, but the combined development launcher checks port 8091. For a non-default model port, run services separately and set `MODEL_URL` to match. The inference server must implement `/health`, `/props`, `/apply-template`, `/tokenize`, and `/v1/chat/completions` (the llama.cpp server API).
 
 ## Data and checks
 
@@ -53,6 +53,8 @@ node frontend/check-ui.mjs
 node frontend/check-chat.mjs
 node frontend/check-insights.mjs
 node frontend/check-timing.mjs
+node frontend/check-conversation.mjs
+.venv/bin/python -m scripts.check_conversation
 ```
 
 Browser checks require the running app and installed Chrome. Chat and insight checks use the real local model; backend unit tests use deterministic embeddings and simulated generation. `.venv/bin/python scripts/benchmark.py` measures live first-text and total response times, including a repeated request to exercise caching. Browser screenshots and benchmark results are written under `/private/tmp/forma-*`.

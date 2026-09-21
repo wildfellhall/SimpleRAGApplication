@@ -33,10 +33,14 @@ def isolated_db(tmp_path,monkeypatch):
 
 
 def mock_model(monkeypatch,content='Maya has 100 sessions [STU-1001]. [STU-9999]'):
+    content+=' Use these recorded outcomes as a starting point for the next lesson. Ask the learner to explain a worked example, then use a short independent check to decide what support to offer next.'
     captured=[]
     original=httpx.AsyncClient
     def respond(request):
+        if request.url.path=='/props':return httpx.Response(200,json={'default_generation_settings':{'n_ctx':8192}})
         if request.method=='GET':return httpx.Response(200,json={'status':'ok'})
+        if request.url.path=='/apply-template':return httpx.Response(200,json={'prompt':json.dumps(json.loads(request.content)['messages'])})
+        if request.url.path=='/tokenize':return httpx.Response(200,json={'tokens':[0]*(len(json.loads(request.content)['content'])//3)})
         captured.append(json.loads(request.content))
         chunks=[{'choices':[{'delta':{'content':part},'finish_reason':None}]} for part in [content[:15],content[15:]]]
         chunks.append({'choices':[{'delta':{},'finish_reason':'stop'}],'usage':{'prompt_tokens':200,'completion_tokens':30}})
@@ -165,7 +169,7 @@ def test_stream_and_citations(monkeypatch):
         response=client.post('/api/chat/stream',json={'question':'Tell me about Maya'})
         events=[json.loads(frame.split('data: ',1)[1]) for frame in response.text.strip().split('\n\n')]
     assert response.headers['content-type'].startswith('text/event-stream')
-    assert 'event: retrieval' in response.text and response.text.count('event: delta')==2
+    assert 'event: retrieval' in response.text and response.text.count('event: delta')==1
     result=events[-1]
     assert 'STU-9999' not in result['answer']
     assert result['sources'][0]['cited']

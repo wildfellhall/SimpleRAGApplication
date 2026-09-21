@@ -64,7 +64,7 @@ Chroma uses an HNSW index with **cosine distance**. Stored metadata includes doc
 
 ### Free-text chat
 
-1. **Resolve scope.** An explicit student dropdown takes precedence over names in the question. Otherwise, student IDs and first-name matches identify students. Skill aliases identify topics such as “fractions” or “combining like terms.” For a recognized pronoun-based follow-up, the previous user question can supply context.
+1. **Resolve scope.** An explicit student dropdown takes precedence over names in the question. Otherwise, student IDs and first-name matches identify students. Skill aliases identify topics such as “fractions” or “combining like terms.” The complete submitted conversation and the preceding retrieval scope carry student and skill references through follow-ups, including short requests such as “give two examples.” Explicit new students, skills, or class-wide requests update that scope.
 2. **Embed the resolved question.** The query contains the user's question plus resolved student scope and, when needed, a bounded previous question. Long text is split into chunks of up to 240 characters; their vectors are combined with character-length weighting, rather than dropping the end of the question.
 3. **Infer an unnamed skill when justified.** The same vector searches skill documents. If no alias matched, a nearest-skill score of at least `0.42` and a margin of at least `0.03` over the runner-up can supply a skill filter. These are implementation heuristics, not calibrated confidence estimates.
 4. **Retrieve problem examples.** Chroma searches problem documents using student and skill metadata filters. It returns up to two nearest records; only examples with cosine similarity of at least `0.25` enter the prompt. The reported score is `1 - cosine distance`.
@@ -105,13 +105,25 @@ When no student matches, retrieval does not perform question embedding or vector
 
 ## Context assembly and local generation
 
-Before inference, the application converts selected evidence into compact text and tables. Each source is prefixed with an ID such as `[STU-1020]`, `[R1909]`, or `[FILTERED]`. Unrelated skill tables are omitted, while the source viewer retains the retrieved JSON data behind the compact presentation.
+Before inference, the application converts selected evidence into compact text and tables. Each source is prefixed with an ID such as `[STU-1020]`, `[R1909]`, or `[FILTERED]`. Problem examples include their canonical correct answers separately from the student’s recorded outcome. Unrelated skill tables are omitted, while the source viewer retains the retrieved JSON data behind the compact presentation.
 
 The prompt instructs the model to use supplied records for factual claims, cite sources, distinguish observations from suggested teaching actions, and acknowledge missing evidence. Guided prompts label totals and means explicitly and instruct the model not to infer time trends from isolated retrieved examples or psychological meaning from affect scores.
 
-The configured generation model is a local **Qwen3.8-27B IQ1_S GGUF**, served through **llama.cpp** with Metal acceleration on the development machine. The name is reported from the existing file and metadata; no model weights are distributed here. The backend uses a temperature of `0.2`, disables thinking through the chat template, caps output at 360 tokens, and requests answers of at most 150 words. Other compatible local GGUFs can be configured.
+The configured generation model is a local **Qwen3.8-27B IQ1_S GGUF**, served through **llama.cpp** with Metal acceleration on the development machine. The name is reported from the existing file and metadata; no model weights are distributed here. The backend uses a temperature of `0.3` (`0.2` on recovery), disables thinking and preservation of previous reasoning through the chat template, and reserves up to 1,200 output tokens. Teacher advice and lesson plans are normally 120–350 words; direct factual replies can remain brief. There is no blanket 150-word cap. Other compatible local GGUFs can be configured.
 
-FastAPI streams server-sent events: `retrieval` exposes selected sources, `delta` carries text, `done` supplies the completed answer and metrics, and `error` reports a failure. The React client parses events across network chunk boundaries and renders Markdown as text arrives.
+FastAPI uses server-sent events: `retrieval` exposes selected sources, `status` reports preparation/recovery progress, `delta` carries validated answer text, `done` supplies the completed answer and metrics, and `error` reports a service failure. The model connection still streams internally, but the application buffers each candidate until it is complete and validated. The frontend renders only the validated `done` answer. This deliberately delays first visible answer text so an empty attempt, hidden reasoning, or a discarded draft cannot flash in the conversation.
+
+### Conversation continuity and response recovery
+
+The browser sends all completed turns, including the student/skill scope of each assistant response, rather than only the last two exchanges. The API accepts up to 1,000 history messages, 16,000 characters per history message, and a 4,000-character current question. Failed assistant drafts are excluded; retry replaces the failed turn without duplicating the teacher question.
+
+[Conversation handling](backend/conversation.py) retains complete recent turns and builds labelled, deterministic excerpts of relevant older messages when the history is long. The full transcript remains in browser memory; excerpts are context rather than newly asserted student facts. Before inference, the backend calls llama.cpp’s `/apply-template` and `/tokenize` endpoints, checks the actual context size from `/props`, and reduces the history budget until the prompt leaves room for 1,200 output tokens plus a 256-token margin. This is bounded context management, not unlimited perfect recall. Very long messages may be shortened in the model context, and context that still cannot fit returns an explicit error.
+
+The server requests separate reasoning output and ignores reasoning fields. XML/channel reasoning markers are removed before any answer is delivered. Empty, reasoning-only, unfinished, and unhelpfully terse candidates trigger one automatic retry. Heuristics also catch common internal self-talk, instruction echoes, and false claims that supplied conversation history is unavailable. Brief factual answers and greetings are permitted. If both attempts fail validation, Forma returns a clearly labelled summary of verified retrieved records and retains the conversation, rather than presenting a blank response or claiming the fallback is a completed teaching plan. Service outages remain explicit errors.
+
+Guided filters continue to constrain learning evidence across follow-ups, while the latest teacher request controls the response format: an initial **Summary** can become a lesson plan in a later turn. Generated practice problems and general teaching advice are allowed as suggestions, while claims about students must use current retrieved evidence.
+
+These checks prevent known malformed-output paths but do not prove mathematical correctness, factual entailment, or perfect detection of unmarked internal reasoning. Inspect sources when reviewing a teaching recommendation. Model integration follows the [llama.cpp server API](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
 
 Recognized citation IDs that were not supplied to the model are removed from the final response. **Citation cleanup does not prove that a claim follows from its source.** The model can still misinterpret records or overgeneralize; the visible evidence is provided for review. This is a synthetic teaching-assistant demo, not a validated assessment system.
 
@@ -120,9 +132,9 @@ Recognized citation IDs that were not supplied to the model are removed from the
 - **Persistent embeddings:** unchanged evidence is not re-embedded on startup.
 - **Small retrieval context:** two relevant examples plus required aggregates keep prompts bounded while retaining complete comparison data where needed.
 - **Question cache:** up to 256 resolved-question embeddings are retained in memory.
-- **Answer cache:** up to 32 completed answers are keyed by the prompt, conversation context, index fingerprint, model configuration, and guided filters. Repeated requests still select evidence but can reuse embedding and generation results; incomplete responses are not cached.
+- **Answer cache:** up to 32 completed answers are keyed by the prompt, conversation context, index fingerprint, model configuration, and guided filters. Repeated requests still select evidence but can reuse embedding and generation results; incomplete responses and records-only fallbacks are not cached.
 - **Responsive controls:** preview requests are debounced by 180 ms and superseded browser requests are canceled.
-- **Visible diagnostics:** responses report the resolved query, applied student/skill scope, matches and scores, context size, retrieval timing, first-token timing, token usage, and cache status.
+- **Visible diagnostics:** responses report the resolved query, applied student/skill scope, matches and scores, context size, retrieval timing, model first-token timing, validated-answer availability (`first_text_ms`), generation attempts, recovery/fallback status, token usage, and cache status. Responses also report the number of history messages, context compaction, and actual prompt/context token counts.
 
 `POST /api/retrieve` runs retrieval without generation. For example:
 
@@ -149,11 +161,12 @@ Use `POST /api/insights/preview` to inspect a graphical selection, `/api/chat/st
 | [backend/vectors.py](backend/vectors.py) | Embeddings, persistent Chroma, filters, and index lifecycle |
 | [backend/rag.py](backend/rag.py) | Query planning, context construction, local inference, caching, citations |
 | [backend/insights.py](backend/insights.py) | Guided selection, preview, and exact cohort statistics |
+| [backend/conversation.py](backend/conversation.py) | History budgeting, reasoning removal, and answer validation |
 | [backend/main.py](backend/main.py) | FastAPI endpoints, streaming, and inference concurrency |
 | [frontend/src/InsightBuilder.tsx](frontend/src/InsightBuilder.tsx) | Graphical controls and live question preview |
 | [frontend/src/App.tsx](frontend/src/App.tsx) | Chat, student histories, skill browsing, and source inspection |
 
-The 27 backend tests exercise real persistent Chroma with deterministic test embeddings and mocked generation. They cover question-to-vector propagation, metadata filters, numerical aggregates, follow-up scope, guided accuracy ranges, no-match behavior, cache invalidation, citation cleanup, migration preservation, timing backfill idempotence, exact duration totals/averages, timing metadata and prompt propagation, and failed-rebuild recovery. Browser scripts cover desktop/mobile layouts, accessibility, real local-model generation, evidence inspection, and guided follow-ups. These checks verify application behavior; they are not a model-quality benchmark.
+The 50 backend tests exercise real persistent Chroma with deterministic test embeddings and mocked generation. They cover question-to-vector propagation, metadata filters, numerical aggregates, follow-up scope, guided accuracy ranges, no-match behavior, cache invalidation, citation cleanup, migration preservation, timing backfill idempotence, exact duration totals/averages, timing metadata and prompt propagation, failed-rebuild recovery, multi-turn scope retention, token-budget compaction, hidden reasoning, invalid-answer recovery, and uncached fallbacks. Browser scripts cover desktop/mobile layouts, accessibility, real local-model generation, evidence inspection, guided follow-ups, full-history transport, and retry behavior. `python -m scripts.check_conversation` exercises five consecutive real-model turns including lesson refinement, constraint recall, and a student change. These checks verify application behavior; they are not a model-quality benchmark.
 
 Current limits include a small synthetic dataset, heuristic entity/topic resolution, two retrieved problem examples, no reranker, and no authentication. Conversation state lives in browser memory. One local inference runs at a time; the embedded database setup expects one API worker.
 

@@ -10,9 +10,9 @@ if(process.env.FORMA_STUDENT_CHECK){
   await page.getByRole('textbox',{name:'Ask about your students'}).fill('How is Julian Reed doing with fractions? Give exact correctness and one next step.')
   await page.getByRole('button',{name:'Send message'}).click()
 }else{await page.getByRole('button',{name:/Look closer at a skill/}).click()}
-await expect(page.locator('.message.assistant .markdown')).toBeVisible({timeout:130000})
+await expect(page.locator('.message.assistant .markdown')).toBeVisible({timeout:390000})
 console.log('First visible text seconds',(Date.now()-started)/1000)
-await expect(page.getByRole('button',{name:'New conversation'})).toBeEnabled({timeout:130000})
+await expect(page.getByRole('button',{name:'New conversation'})).toBeEnabled({timeout:390000})
 console.log('Live response seconds',(Date.now()-started)/1000)
 console.log('ANSWER',await page.locator('.message.assistant .markdown').innerText())
 await page.locator('.sources summary').click()

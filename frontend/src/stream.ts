@@ -23,7 +23,11 @@ export async function streamChat(body:unknown, onEvent:(event:StreamEvent)=>void
     if(!data.length)return
     const parsed=JSON.parse(data.join('\n'))
     if(event==='error')throw new Error(parsed.detail||'The response was interrupted. Please try again.')
-    if(event==='done')completed=true
+    if(event==='done'){
+      if(typeof parsed.answer!=='string'||!parsed.answer.trim())throw new Error('The model did not return a complete answer. Please retry.')
+      if(/<\/?(?:think|analysis|reasoning)\b|<\|channel\|>/i.test(parsed.answer))throw new Error('An invalid model response was blocked. Please retry.')
+      completed=true
+    }
     onEvent({event,data:parsed})
   }
   try{

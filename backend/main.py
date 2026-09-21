@@ -33,15 +33,20 @@ async def lifespan(app):
 app = FastAPI(title='Forma · Local learning insights', lifespan=lifespan)
 chat_lock = asyncio.Lock()
 
+class ConversationScope(BaseModel):
+    student_ids:list[str]=Field(default_factory=list,max_length=20)
+    skill_ids:list[str]=Field(default_factory=list,max_length=12)
+
 class Message(BaseModel):
     role: Literal['user','assistant']
-    content: str = Field(min_length=1,max_length=3000)
+    content: str = Field(min_length=1,max_length=16000)
+    scope: ConversationScope | None = None
 
 class ChatRequest(BaseModel):
     filters: insights.InsightFilters | None = None
-    question: str = Field(min_length=1,max_length=1200)
+    question: str = Field(min_length=1,max_length=4000)
     student_id: str | None = None
-    history: list[Message] = Field(default_factory=list,max_length=6)
+    history: list[Message] = Field(default_factory=list,max_length=1000)
 
 @app.get('/api/health')
 async def health():
