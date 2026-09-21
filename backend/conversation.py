@@ -1,8 +1,15 @@
 """Bounded conversation context and validation of user-visible model answers."""
 import re
+from difflib import SequenceMatcher
 
-TEMPLATE_OPTIONS = {'enable_thinking': False, 'preserve_thinking': False}
+# History is sanitized below and contains no reasoning_content. For this Qwen
+# template, preserve_thinking keeps the empty structural <think></think> prefix
+# on historical assistant turns, matching the prefix used for the next answer.
+TEMPLATE_OPTIONS = {'enable_thinking': False, 'preserve_thinking': True}
 MAX_OUTPUT_TOKENS = 1200
+# Qwen3.8's published non-thinking settings; very low temperatures can loop.
+SAMPLING_OPTIONS = {'temperature': .7, 'top_p': .8, 'top_k': 20, 'min_p': 0.0,
+                    'presence_penalty': 1.5, 'repeat_penalty': 1.0}
 
 
 def clean_answer(raw):
@@ -46,6 +53,64 @@ def answer_issue(text, question, has_history, finish):
     words = re.findall(r'\b\w+\b',text)
     if len(words)<(4 if brief else 24):return 'unhelpfully short answer'
     return None
+
+
+def answer_words(text):
+    """Ignore presentation/citations, retaining numbers and math operators."""
+    text=re.sub(r'\[(?:STU-\d+|R\d+|S\d+|CLASS|ROSTER|FILTERED)\]', '', clean_answer(text))
+    return re.findall(r'\w+|[+−×÷=<>/]',text.casefold())
+
+
+def repetition_issue(text, question, history):
+    """Catch copied follow-up answers, not shared vocabulary or repeated facts.
+
+    This is a lexical guard, not a semantic relevance judge. Check recent answers
+    because a model can also loop back to the answer before its most recent one.
+    """
+    current=answer_words(text)
+    # A repeated factual value or greeting can legitimately answer a new question.
+    if len(current)<30:return None
+    q=question.casefold().replace('’',"'")
+    repeat_requested=bool(re.search(r'\b(?:repeat|restate|reproduce|quote|resend)\b|\b(?:say|show|give) (?:me )?(?:that|it|the same (?:answer|response)) again\b',q))
+    modification=bool(re.search(r"\b(?:but|instead|change|revise|add|different|new|shorter|simpler|easier|harder|correct|replace|update|don't|not|never|avoid|without|stop)\b",q))
+    if repeat_requested and not modification:return None
+    last_question=''
+    pairs=[]
+    for message in history or []:
+        if message['role']=='user':last_question=message['content']
+        elif message['role']=='assistant':pairs.append((last_question,message['content']))
+    for previous_question,answer in pairs[-3:]:
+        if answer_words(question)==answer_words(previous_question):continue
+        previous=answer_words(answer)
+        if len(previous)<30:continue
+        if current==previous:return 'repeated earlier answer instead of addressing the latest request'
+        # A shorter summary or a concrete correction can reuse much of its source.
+        if re.search(r'\b(?:summari[sz]e|shorten|shorter|condense|brief|concise)\b',q) and len(current)<len(previous)*.8:continue
+        if re.search(r'\b(?:change|revise|correct|replace|update|make|adapt)\b',q):
+            numbers=lambda words:[w for w in words if re.search(r'\d',w)]
+            if numbers(current)!=numbers(previous):continue
+            # Small requested edits (e.g. ten minutes -> five minutes, strips -> tiles)
+            # can be valid even when the rest of the response is intentionally reused.
+            edit_words=set(answer_words(question))-set('change revise correct replace update make adapt the a an it that this to into with for instead now please easier harder shorter simpler different new'.split())
+            if (set(current)-set(previous)) & edit_words:continue
+        # Allow substantive additions while catching minor edits and copied sections.
+        similarity=SequenceMatcher(None,previous,current,autojunk=False).ratio()
+        def shingles(words):return {tuple(words[i:i+5]) for i in range(len(words)-4)}
+        old,new=shingles(previous),shingles(current)
+        if similarity>=.92 or (len(old & new)/len(new)>=.9 and len(old & new)/len(old)>=.7):
+            return 'repeated earlier answer instead of addressing the latest request'
+    return None
+
+
+def retry_instruction(issue):
+    if issue=='repeated earlier answer instead of addressing the latest request':
+        return ('The discarded draft repeated an earlier answer. Fulfill the final user message: '
+                'produce the requested new material, revision, or explanation. Use earlier answers only '
+                'to resolve references. Do not repeat the student overview or the previous plan unless '
+                'the latest request explicitly asks for it. Start with the requested result.')
+    return ('The previous generation did not produce a usable final answer. Answer the final user message '
+            'directly using the supplied conversation and records. Provide a complete teacher-facing '
+            'response, without internal reasoning. Keep it under 350 words.')
 
 
 def clip(text, limit):

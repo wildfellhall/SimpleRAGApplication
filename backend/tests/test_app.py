@@ -173,7 +173,7 @@ def test_stream_and_citations(monkeypatch):
     result=events[-1]
     assert 'STU-9999' not in result['answer']
     assert result['sources'][0]['cited']
-    assert 'EVIDENCE:' in captured[0]['messages'][-1]['content']
+    assert 'EVIDENCE:' in captured[0]['messages'][0]['content']
     assert captured[0]['stream'] and captured[0]['model']=='qwen-local-27b'
     assert result['metrics']['first_token_ms'] is not None
 
@@ -443,7 +443,7 @@ def test_timing_is_in_chroma_vectors_metadata_and_prompt(monkeypatch):
         profile=response['sources'][0]
         assert 'avg_time_seconds' in profile['content'] and 'total_time_seconds' in profile['content']
         assert 'First 12 sessions' not in profile['content']
-        assert 'avg_time_seconds' in captured[0]['messages'][-1]['content']
+        assert 'avg_time_seconds' in captured[0]['messages'][0]['content']
         assert 'not model response latency' in captured[0]['messages'][0]['content']
         total_prompt=rag.retrieve('Give Julian’s total time spent on fractions.','STU-1020')[0]['content']
         assert 'total_time_seconds' in total_prompt and 'Separately, across ALL skills' not in total_prompt
