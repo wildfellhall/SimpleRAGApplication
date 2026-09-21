@@ -44,7 +44,7 @@ Export variables in the shell; environment files are not loaded automatically. `
 
 ## Data and checks
 
-`python -m backend.db` seeds a fresh database or applies the additive version-2 migration without duplicating records. If records are intentionally changed, restart the API to rebuild evidence documents, or call `backend.db.build_index(connection)` and commit. Chroma detects the changed evidence fingerprint. With the API stopped, `npm run vectors` builds or verifies the index without concurrent index writers.
+`python -m backend.db` seeds a fresh database or applies the additive version-2 expansion and version-3 synthetic timing migration without duplicating records or replacing existing observations. The timing migration adds `time_taken_seconds` and regenerates duration-aware evidence. The next vector-index initialization rebuilds changed embeddings automatically. If records are intentionally changed, restart the API to rebuild evidence documents, or call `backend.db.build_index(connection)` and commit. Chroma detects the changed evidence fingerprint. With the API stopped, `npm run vectors` builds or verifies the index without concurrent index writers.
 
 ```sh
 npm test
@@ -52,6 +52,7 @@ npm run build
 node frontend/check-ui.mjs
 node frontend/check-chat.mjs
 node frontend/check-insights.mjs
+node frontend/check-timing.mjs
 ```
 
 Browser checks require the running app and installed Chrome. Chat and insight checks use the real local model; backend unit tests use deterministic embeddings and simulated generation. `.venv/bin/python scripts/benchmark.py` measures live first-text and total response times, including a repeated request to exercise caching. Browser screenshots and benchmark results are written under `/private/tmp/forma-*`.

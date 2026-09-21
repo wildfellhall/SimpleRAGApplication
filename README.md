@@ -32,7 +32,7 @@ There is no model-generated SQL, model fine-tuning, or agent loop. The applicati
 
 The seeded classroom contains **20 fictional students**, **120 distinct problems**, and **2,000 problem sessions** across **12 skills**. Each student has a name, stable ID, and 100 sessions. The histories span June 9–September 16, 2026.
 
-Every session records the problem and its skills, final correctness, attempts, hints, and four independent affect values: confusion, determination, confidence, and frustration. Skills include combining like terms, distributive property, one- and two-step equations, integers, fractions, ratios, percentages, order of operations, evaluating expressions, inequalities, and coordinates.
+Every session records the problem and its skills, final correctness, attempts, hints, **time taken in seconds**, and four independent affect values: confusion, determination, confidence, and frustration. Skills include combining like terms, distributive property, one- and two-step equations, integers, fractions, ratios, percentages, order of operations, evaluating expressions, inequalities, and coordinates.
 
 [The database module](backend/db.py) creates the classroom deterministically and materializes **2,034 evidence documents**:
 
@@ -44,7 +44,7 @@ Every session records the problem and its skills, final correctness, attempts, h
 | Class overview | 1 | Whole-class totals and skill statistics |
 | Complete roster | 1 | All-student comparisons without top-k sampling bias |
 
-Correctness is `correct sessions / sessions × 100`, rounded to one decimal. It is final correctness, not first-try accuracy. Attempts and hints are totals; aggregate affect values are means on a 0–1 scale. Problems may involve multiple skills, so skill counts overlap. The affect data is synthetic and does not establish psychological diagnoses.
+Correctness is `correct sessions / sessions × 100`, rounded to one decimal. It is final correctness, not first-try accuracy. Attempts and hints are totals; aggregate affect values are means on a 0–1 scale. Each session’s `time_taken_seconds` is synthetic elapsed time across all its attempts and hints. Summaries expose `total_time_seconds` and `avg_time_seconds` (the total divided by session count, rounded to one decimal). These describe student problem-solving time, independently of the app’s chat response latency. Problems may involve multiple skills, so skill counts overlap. The affect data is synthetic and does not establish psychological diagnoses.
 
 SQLite retains canonical records and produces the source documents. Chroma persists the full JSON documents, embeddings, and metadata. Retrieval reads source documents back from Chroma into an in-memory document map. Generated databases are excluded from the repository; the seed code recreates them.
 
@@ -52,9 +52,11 @@ SQLite retains canonical records and produces the source documents. Chroma persi
 
 [The vector index](backend/vectors.py) embeds a short semantic description of each document using **`all-minilm:22m` through local Ollama**, producing 384-dimensional vectors in the default configuration.
 
-Descriptions preserve the information useful for matching: student identity, problem text, skills, correctness, attempts, hints, and affect. Aggregate descriptions identify the student or skill and the kinds of questions the summary can answer. This avoids sending long aggregate JSON through MiniLM's short input window. The full source document is stored separately and remains available for answer construction and inspection.
+Descriptions preserve the information useful for matching: student identity, problem text, skills, correctness, attempts, hints, time taken, and affect. Aggregate descriptions identify the student or skill and the kinds of questions the summary can answer. This avoids sending long aggregate JSON through MiniLM's short input window. The full source document is stored separately and remains available for answer construction and inspection.
 
-Chroma uses an HNSW index with **cosine distance**. Stored metadata includes document kind, student ID, skill-membership flags such as `skill_S06`, and session-level metrics. Indexing happens in batches. A fingerprint of the evidence, embedding-model name, and index version determines whether vectors can be reused. Rebuilds populate a new collection before publishing its manifest, so an embedding failure does not replace the previous complete index.
+The version-3 data migration deterministically adds durations to all 2,000 existing sessions without changing their earlier observations. A separate per-record random seed combines skill complexity, a synthetic student pace, attempts, hints, and confusion. These are illustrative timings, not measured behavior. Re-running the migration preserves previously stored durations. Changed documents and an updated index version rebuild Chroma embeddings and invalidate old answer-cache entries.
+
+Chroma uses an HNSW index with **cosine distance**. Stored metadata includes document kind, student ID, skill-membership flags such as `skill_S06`, and session-level metrics, including numeric `time_taken_seconds`. Aggregate documents also store numeric `total_time_seconds` and `avg_time_seconds` metadata. Durations are present in the full source documents and compact model context, so questions such as “What is Julian’s average time on fractions?” use the relevant session statistics. Indexing happens in batches. A fingerprint of the evidence, embedding-model name, and index version determines whether vectors can be reused. Rebuilds populate a new collection before publishing its manifest, so an embedding failure does not replace the previous complete index.
 
 ## How a question becomes a query
 
@@ -97,7 +99,7 @@ The **Build an insight** panel exposes a student selector, a skill selector, inc
 4. Calculate exact statistics from **all matching sessions** and create a request-specific `FILTERED` evidence source containing those statistics and the complete matching roster. This source is assembled at request time, not stored as another permanent vector document.
 5. Add up to two relevant problem examples and an instruction corresponding to the selected output type. Unrestricted class summaries are excluded from guided context.
 
-An accuracy slider filters **students by their aggregate rate**, not individual records by a correct/incorrect boolean. For example, a 60–80% fraction range includes Julian and retains both his correct and incorrect fraction sessions when computing statistics.
+An accuracy slider filters **students by their aggregate rate**, not individual records by a correct/incorrect boolean. For example, a 60–80% fraction range includes Julian and retains both his correct and incorrect fraction sessions when computing statistics. Time totals and averages use that same filtered set; group averages are weighted by session count, rather than averaging student averages. The preview displays average problem time, and student histories show each session’s duration with total and average time above the history table.
 
 When no student matches, retrieval does not perform question embedding or vector search, and generation returns a deterministic no-match message without calling the language model. Active filters remain attached to follow-up chat requests until cleared, a new conversation starts, or the student scope changes. Explicit guided controls take precedence over conflicting names or skills in the question.
 
@@ -151,7 +153,7 @@ Use `POST /api/insights/preview` to inspect a graphical selection, `/api/chat/st
 | [frontend/src/InsightBuilder.tsx](frontend/src/InsightBuilder.tsx) | Graphical controls and live question preview |
 | [frontend/src/App.tsx](frontend/src/App.tsx) | Chat, student histories, skill browsing, and source inspection |
 
-The 23 backend tests exercise real persistent Chroma with deterministic test embeddings and mocked generation. They cover question-to-vector propagation, metadata filters, numerical aggregates, follow-up scope, guided accuracy ranges, no-match behavior, cache invalidation, citation cleanup, migration preservation, and failed-rebuild recovery. Browser scripts cover desktop/mobile layouts, accessibility, real local-model generation, evidence inspection, and guided follow-ups. These checks verify application behavior; they are not a model-quality benchmark.
+The 27 backend tests exercise real persistent Chroma with deterministic test embeddings and mocked generation. They cover question-to-vector propagation, metadata filters, numerical aggregates, follow-up scope, guided accuracy ranges, no-match behavior, cache invalidation, citation cleanup, migration preservation, timing backfill idempotence, exact duration totals/averages, timing metadata and prompt propagation, and failed-rebuild recovery. Browser scripts cover desktop/mobile layouts, accessibility, real local-model generation, evidence inspection, and guided follow-ups. These checks verify application behavior; they are not a model-quality benchmark.
 
 Current limits include a small synthetic dataset, heuristic entity/topic resolution, two retrieved problem examples, no reranker, and no authentication. Conversation state lives in browser memory. One local inference runs at a time; the embedded database setup expects one API worker.
 

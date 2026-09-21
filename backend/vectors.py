@@ -15,7 +15,7 @@ from . import db
 EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'all-minilm:22m')
 EMBEDDING_URL = os.getenv('EMBEDDING_URL', 'http://127.0.0.1:11434').rstrip('/')
 COLLECTION = 'learning_evidence'
-INDEX_VERSION = 'forma-chroma-v1'
+INDEX_VERSION = 'forma-chroma-v2-session-time'
 
 
 def embedding_text(doc):
@@ -25,17 +25,17 @@ def embedding_text(doc):
         affect = ', '.join(f'{key} {data[key]}' for key in db.AFFECTS)
         return (f"{data['student_name']} {data['student_id']}. Practice problem: {data['prompt']}. "
                 f"Skills: {', '.join(data['skills'])}. {'Correct' if data['correct'] else 'Incorrect, struggling, needs support'}. "
-                f"Attempts {data['attempts']}, hints {data['hints']}. {affect}.")
+                f"Attempts {data['attempts']}, hints {data['hints']}. Time taken {data['time_taken_seconds']} seconds. {affect}.")
     if doc['kind'] == 'skill':
         return (f"Class performance in {data['skill']}. {data['keywords']}. "
                 'Which students need help with this skill? Correctness, practice, difficulty, hints, confusion, '
-                'determination, confidence, frustration and next steps.')
+                'determination, confidence, frustration, time spent answering, average time per problem and next steps.')
     if doc['kind'] == 'student':
         return (f"{data['name']} {data['id']} learning progress and performance. Strengths, weaknesses, "
-                'skills, improvement over time, correctness, attempts, hints, confusion, determination, confidence, frustration. '
+                'skills, improvement over time, correctness, attempts, hints, confusion, determination, confidence, frustration, time taken answering problems. '
                 + ', '.join(s['name'] for s in data['skills']))
     return (doc['title'] + '. Class overview, all students, compare progress, who needs support, '
-            'correctness, skills, hints, confusion, determination, confidence, frustration.')
+            'correctness, skills, hints, confusion, determination, confidence, frustration, total and average time spent on problems.')
 
 
 class VectorIndex:
@@ -97,7 +97,9 @@ class VectorIndex:
                     metadata = {'kind':doc['kind'],'student_id':doc['student_id'] or '', 'title':doc['title']}
                     metadata.update({f'skill_{sid}':True for sid in skill_ids})
                     if doc['kind']=='problem':
-                        metadata.update({key:data[key] for key in ['problem_id','occurred_at','correct','attempts','hints',*db.AFFECTS]})
+                        metadata.update({key:data[key] for key in ['problem_id','occurred_at','correct','attempts','hints','time_taken_seconds',*db.AFFECTS]})
+                    if isinstance(data,dict) and 'total_time_seconds' in data:
+                        metadata.update({key:data[key] for key in ['total_time_seconds','avg_time_seconds']})
                     metadatas.append(metadata)
                 for start in range(0,len(documents),128):
                     batch=documents[start:start+128]

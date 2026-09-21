@@ -4,10 +4,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from .db import SKILLS, aggregate
 
-METRICS = ('problems','correct','accuracy','attempts','hints','confusion','determination','confidence','frustration')
+METRICS = ('problems','correct','accuracy','attempts','hints','total_time_seconds','avg_time_seconds','confusion','determination','confidence','frustration')
 INTENTS = {
     'recommendations': 'Give 2–3 specific teaching recommendations, each tied to the recorded evidence. Distinguish suggestions from observations.',
-    'summary': 'Summarize exact correctness, attempt and hint totals, and recorded affect averages concisely. Focus on observations rather than teaching recommendations.',
+    'summary': 'Summarize exact correctness, attempt and hint totals, average time per problem, and recorded affect averages concisely. Focus on observations rather than teaching recommendations.',
     'overview': 'Give an overview of the matching group: its size, exact correctness, and key performance and affect patterns. Do not describe it as the whole class unless everyone matches.',
 }
 
@@ -59,7 +59,10 @@ def preview(documents,request):
     verb={'recommendations':'Recommend teaching next steps for','summary':'Summarize the learning records for','overview':'Give a learning overview for'}[request.intent]
     question=f'{verb} {subject}. Use only matching students and cite the evidence.'
     if request.focus.strip():question+=' Additional focus: '+request.focus.strip()
+    sessions=sum(s['problems'] for s in students)
+    total_seconds=sum(s['total_time_seconds'] for s in students)
     return {'question':question,'filters':filters,'students':students,'matching_count':len(students),
+            'total_time_seconds':total_seconds,'avg_time_seconds':round(total_seconds/sessions,1) if sessions else 0,
             'problem_sessions':sum(s['problems'] for s in students),'accuracy_basis':skill_name(filters)}
 
 

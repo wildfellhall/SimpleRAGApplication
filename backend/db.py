@@ -27,6 +27,7 @@ NAMES = ['Maya Chen', 'Noah Williams', 'Aisha Patel', 'Liam Garcia', 'Sofia Mart
 NAMES += ['Audrey Bell', 'Julian Reed']
 SESSIONS_PER_STUDENT = 100
 DATASET_VERSION = 2
+TIMING_VERSION = 3
 AFFECTS = ('confusion', 'determination', 'confidence', 'frustration')
 
 
@@ -61,6 +62,8 @@ def initialize():
         con.execute('CREATE TABLE IF NOT EXISTS dataset_migrations(version INTEGER PRIMARY KEY)')
         if con.execute('SELECT count(*) FROM students').fetchone()[0]:
             expand_dataset(con)
+            add_session_timing(con)
+            build_index(con)
             return
         rng = random.Random(20260920)
         for sid, name, keywords, problems in SKILLS:
@@ -88,8 +91,10 @@ def initialize():
                 confidence = round(min(.98, max(.05, 1 - confusion + rng.uniform(-.12,.12))), 2)
                 determination = round(rng.uniform(.45,.95), 2)
                 timestamp = (datetime(2026,8,24,9,0) + timedelta(days=day, minutes=i*3)).isoformat()
-                con.execute('INSERT INTO interactions VALUES(?,?,?,?,?,?,?,?,?,?,?)', (f'R{i*24+day+1:04}', student, pid, timestamp, int(correct), attempts, hints, confusion, determination, confidence, frustration))
+                con.execute('INSERT INTO interactions(id,student_id,problem_id,occurred_at,correct,attempts,hints,confusion,determination,confidence,frustration) VALUES(?,?,?,?,?,?,?,?,?,?,?)', (f'R{i*24+day+1:04}', student, pid, timestamp, int(correct), attempts, hints, confusion, determination, confidence, frustration))
         expand_dataset(con)
+        add_session_timing(con)
+        build_index(con)
 
 
 
@@ -145,10 +150,29 @@ def expand_dataset(con):
             confidence = round(min(.98,max(.05,1-confusion+rng.uniform(-.12,.12))),2)
             determination = round(rng.uniform(.45,.95),2)
             timestamp = (datetime(2026,6,9,9)+timedelta(days=day,minutes=i*3)).isoformat()
-            con.execute('INSERT INTO interactions VALUES(?,?,?,?,?,?,?,?,?,?,?)',(f'R{next_record:04}',student,pid,timestamp,int(correct),attempts,hints,confusion,determination,confidence,frustration))
+            con.execute('INSERT INTO interactions(id,student_id,problem_id,occurred_at,correct,attempts,hints,confusion,determination,confidence,frustration) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(f'R{next_record:04}',student,pid,timestamp,int(correct),attempts,hints,confusion,determination,confidence,frustration))
             next_record += 1
     con.execute('INSERT INTO dataset_migrations VALUES(?)',(DATASET_VERSION,))
-    build_index(con)
+
+
+def add_session_timing(con):
+    """Backfill synthetic elapsed seconds without changing existing learning observations."""
+    columns={r['name'] for r in con.execute('PRAGMA table_info(interactions)')}
+    if 'time_taken_seconds' not in columns:
+        con.execute('ALTER TABLE interactions ADD COLUMN time_taken_seconds INTEGER CHECK(time_taken_seconds > 0)')
+    # A separate per-record random stream preserves all previously seeded outcomes.
+    base_seconds={'S01':45,'S02':65,'S03':40,'S04':75,'S05':30,'S06':80,
+                  'S07':70,'S08':60,'S09':50,'S10':45,'S11':65,'S12':40}
+    skills={r['problem_id']:r['skill_id'] for r in con.execute('SELECT problem_id,min(skill_id) skill_id FROM problem_skills GROUP BY problem_id')}
+    for row in con.execute('SELECT * FROM interactions WHERE time_taken_seconds IS NULL').fetchall():
+        rng=random.Random('forma-session-time-v3:'+row['id'])
+        pace=.85+(int(row['student_id'].split('-')[1])%7)*.075
+        seconds=round((base_seconds[skills[row['problem_id']]]*pace
+                       + (row['attempts']-1)*rng.uniform(18,42)+row['hints']*rng.uniform(8,20)
+                       + row['confusion']*35)*rng.uniform(.75,1.3))
+        con.execute('UPDATE interactions SET time_taken_seconds=? WHERE id=?',(max(15,seconds),row['id']))
+    con.execute('INSERT OR IGNORE INTO dataset_migrations VALUES(?)',(TIMING_VERSION,))
+
 
 def histories(con, student_id=None):
     rows = con.execute('''SELECT i.*, s.name student_name, p.prompt, p.answer,
@@ -164,6 +188,8 @@ def aggregate(rows):
     return {'problems': n, 'correct': sum(r['correct'] for r in rows),
             'accuracy': round(100 * sum(r['correct'] for r in rows) / n, 1) if n else 0,
             'attempts': sum(r['attempts'] for r in rows), 'hints': sum(r['hints'] for r in rows),
+            'total_time_seconds': sum(r['time_taken_seconds'] for r in rows),
+            'avg_time_seconds': round(sum(r['time_taken_seconds'] for r in rows)/n,1) if n else 0,
             **{a: round(sum(r[a] for r in rows) / n, 2) if n else 0 for a in AFFECTS}}
 
 

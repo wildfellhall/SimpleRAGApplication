@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowUpRight, BookOpen, LayoutList, LoaderCircle, RotateCcw, Sparkles, Users } from 'lucide-react'
 
 export type InsightFilters = {skill_id:string|null; accuracy_min:number; accuracy_max:number; intent:'recommendations'|'summary'|'overview'}
-type Preview = {question:string; filters:InsightFilters; students:{id:string;name:string;accuracy:number}[]; matching_count:number; problem_sessions:number; accuracy_basis:string}
+type Preview = {total_time_seconds:number;avg_time_seconds:number;question:string; filters:InsightFilters; students:{id:string;name:string;accuracy:number}[]; matching_count:number; problem_sessions:number; accuracy_basis:string}
 type Props = {
   students:{id:string;name:string}[]; skills:{id:string;name:string}[];
   studentId:string; onStudentChange:(id:string)=>void;
@@ -62,7 +62,7 @@ export default function InsightBuilder({students,skills,studentId,onStudentChang
     <div className="insight-preview" aria-live="polite">
       {error?<div className="error" role="alert">{error}<button type="button" onClick={()=>setRetry(n=>n+1)}>Retry preview</button></div>:!preview?<p className="preview-loading"><LoaderCircle size={14} className="spin"/> Checking the learning records…</p>:<>
         <div className="preview-count"><Users size={15}/><strong>{preview.matching_count} {preview.matching_count===1?'student matches':'students match'}</strong><span>· {preview.problem_sessions.toLocaleString()} problem sessions</span></div>
-        {preview.matching_count?<><div className="matching-students">{preview.students.slice(0,4).map(s=><span key={s.id}>{s.name}<b>{s.accuracy}%</b></span>)}{preview.students.length>4&&<span>+{preview.students.length-4} more</span>}</div><div className="question-preview"><small>YOUR QUESTION</small><p>{preview.question}</p></div></>:<p className="no-matches">No students match these settings. Widen the accuracy range or choose another student or skill.</p>}
+        {preview.matching_count?<><p className="control-help">Average time per problem: {preview.avg_time_seconds.toFixed(1)} seconds · synthetic session time</p><div className="matching-students">{preview.students.slice(0,4).map(s=><span key={s.id}>{s.name}<b>{s.accuracy}%</b></span>)}{preview.students.length>4&&<span>+{preview.students.length-4} more</span>}</div><div className="question-preview"><small>YOUR QUESTION</small><p>{preview.question}</p></div></>:<p className="no-matches">No students match these settings. Widen the accuracy range or choose another student or skill.</p>}
       </>}
     </div>
     <div className="insight-actions"><span><BookOpen size={13}/> Grounded in matching learning records</span><button type="submit" disabled={busy||!preview?.matching_count}>Generate insight <ArrowUpRight size={16}/></button></div>

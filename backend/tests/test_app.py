@@ -380,3 +380,93 @@ def test_guided_intent_cache_and_followup_filters(monkeypatch):
         assert followup['retrieval']['student_ids']==['STU-1020']
         assert followup['retrieval']['skill_ids']==['S06']
         assert followup['sources'][0]['data']['summary']['accuracy']==70
+
+
+def test_timing_migration_preserves_existing_observations_and_is_idempotent():
+    with db.connect() as con:
+        expected_times={r['id']:r['time_taken_seconds'] for r in con.execute('SELECT * FROM interactions')}
+        con.execute('ALTER TABLE interactions DROP COLUMN time_taken_seconds')
+        con.execute('DELETE FROM dataset_migrations WHERE version=3')
+        original=[tuple(r) for r in con.execute('SELECT * FROM interactions ORDER BY id')]
+    db.initialize()
+    with db.connect() as con:
+        rows=con.execute('SELECT * FROM interactions ORDER BY id').fetchall()
+        assert [tuple(r)[:-1] for r in rows]==original
+        assert {r['id']:r['time_taken_seconds'] for r in rows}==expected_times
+        assert all(isinstance(r['time_taken_seconds'],int) and r['time_taken_seconds']>0 for r in rows)
+        con.execute("UPDATE interactions SET time_taken_seconds=123 WHERE id='R0001'")
+        for invalid in [0,-5]:
+            with pytest.raises(sqlite3.IntegrityError):
+                con.execute("UPDATE interactions SET time_taken_seconds=? WHERE id='R0002'",(invalid,))
+    db.initialize()
+    db.initialize()
+    with db.connect() as con:
+        assert con.execute("SELECT time_taken_seconds FROM interactions WHERE id='R0001'").fetchone()[0]==123
+        assert con.execute('SELECT count(*) FROM dataset_migrations WHERE version=3').fetchone()[0]==1
+        assert json.loads(con.execute("SELECT content FROM documents WHERE id='R0001'").fetchone()[0])['time_taken_seconds']==123
+
+
+def test_timing_totals_and_skill_averages_match_full_sessions():
+    with TestClient(app) as client:
+        overview=client.get('/api/overview').json()
+        student=client.get('/api/students/STU-1020').json()
+        with db.connect() as con:
+            count,total=con.execute('SELECT count(*),sum(time_taken_seconds) FROM interactions').fetchone()
+        assert overview['summary']['total_time_seconds']==total
+        assert overview['summary']['avg_time_seconds']==round(total/count,1)
+        for skill in student['skills']:
+            rows=[r for r in student['history'] if skill['name'] in r['skills']]
+            seconds=sum(r['time_taken_seconds'] for r in rows)
+            assert skill['total_time_seconds']==seconds
+            assert skill['avg_time_seconds']==round(seconds/len(rows),1)
+        assert db.aggregate([])['avg_time_seconds']==0
+        assert db.aggregate([])['total_time_seconds']==0
+
+
+def test_timing_is_in_chroma_vectors_metadata_and_prompt(monkeypatch):
+    captured=mock_model(monkeypatch,'The timing is recorded in seconds [STU-1020].')
+    with TestClient(app) as client:
+        index=vectors.get_index()
+        result=index.collection.get(ids=['R2000','STU-1020'],include=['documents','metadatas'])
+        for content,metadata in zip(result['documents'],result['metadatas']):
+            data=json.loads(content)
+            fields=['time_taken_seconds'] if metadata['kind']=='problem' else ['total_time_seconds','avg_time_seconds']
+            assert all(metadata[f]==data[f] for f in fields)
+        assert 'Time taken ' in vectors.embedding_text(index.documents['R2000'])
+        matches=index.collection.get(where={'time_taken_seconds':{'$gt':200}},include=['documents'])
+        assert matches['ids'] and all(json.loads(d)['time_taken_seconds']>200 for d in matches['documents'])
+        response=client.post('/api/chat',json={'question':'What is Julian’s average time taken for fractions?','student_id':'STU-1020'}).json()
+        profile=response['sources'][0]
+        assert 'avg_time_seconds' in profile['content'] and 'total_time_seconds' in profile['content']
+        assert 'First 12 sessions' not in profile['content']
+        assert 'avg_time_seconds' in captured[0]['messages'][-1]['content']
+        assert 'not model response latency' in captured[0]['messages'][0]['content']
+        total_prompt=rag.retrieve('Give Julian’s total time spent on fractions.','STU-1020')[0]['content']
+        assert 'total_time_seconds' in total_prompt and 'Separately, across ALL skills' not in total_prompt
+        signature=index.signature
+        with db.connect() as con:
+            con.execute("UPDATE interactions SET time_taken_seconds=time_taken_seconds+10 WHERE id='R2000'")
+            db.build_index(con)
+        updated=vectors.get_index()
+        assert updated.signature!=signature
+        record=updated.collection.get(ids=['R2000'],include=['documents','metadatas'])
+        assert record['metadatas'][0]['time_taken_seconds']==json.loads(record['documents'][0])['time_taken_seconds']
+
+
+def test_guided_timing_uses_weighted_matching_sessions_only():
+    with TestClient(app) as client:
+        filters={'skill_id':'S06','accuracy_min':0,'accuracy_max':60,'intent':'overview'}
+        preview=client.post('/api/insights/preview',json=filters).json()
+        result=client.post('/api/retrieve',json={'question':'How much time do these students spend on fractions?','filters':filters}).json()
+        cohort=result['sources'][0]['data']
+        ids={s['id'] for s in preview['students']}
+        with db.connect() as con:
+            rows=[r for r in db.histories(con) if r['student_id'] in ids and 'Fraction operations' in r['skills']]
+        total=sum(r['time_taken_seconds'] for r in rows)
+        average=round(total/len(rows),1)
+        assert preview['total_time_seconds']==cohort['summary']['total_time_seconds']==total
+        assert preview['avg_time_seconds']==cohort['summary']['avg_time_seconds']==average
+        assert f'Average time per problem session: {average} seconds' in result['sources'][0]['content']
+        assert all('time_taken_seconds=' in d['content'] for d in result['sources'][1:])
+        empty=client.post('/api/insights/preview',json={**filters,'student_id':'STU-1020'}).json()
+        assert empty['matching_count']==empty['avg_time_seconds']==empty['total_time_seconds']==0
