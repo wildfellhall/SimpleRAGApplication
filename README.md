@@ -2,7 +2,9 @@
 
 Forma is a retrieval-augmented generation application for exploring a synthetic pre-algebra classroom. Ask a question or use student and skill dropdowns, accuracy sliders, and output-type radio buttons to generate recommendations, summaries, or overviews. Each answer includes the evidence supplied to the model.
 
-The application combines **question-driven vector retrieval in Chroma**, **exact statistics computed in Python**, and **local language-model generation**. React provides the interface; FastAPI coordinates retrieval and streams the response. Both embeddings and generation run on the host device.
+The application combines **question-driven vector retrieval in Chroma**, **exact statistics computed in Python**, and **local language-model generation**. 
+
+React provides the interface; FastAPI coordinates retrieval and streams the response. Both embeddings and generation run on the host device.
 
 ## The RAG architecture
 
